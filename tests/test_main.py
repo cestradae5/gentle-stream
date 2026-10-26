@@ -71,3 +71,52 @@ def test_setup_samples_reports_a_checksum_mismatch(tmp_path, monkeypatch, capsys
     monkeypatch.setattr(samples, "DEB_SHA256", "0" * 64)
     assert main(["setup-samples"]) == 1
     assert "checksum" in capsys.readouterr().err.lower()
+
+
+# ------------------------------------------------------------ Windows: no background player
+@pytest.fixture
+def windows(monkeypatch, tmp_path):
+    """The Windows path on any OS: no background player, fake audio, no real config."""
+    import gentle_stream
+
+    monkeypatch.setattr(gentle_stream, "BACKGROUND_PLAYER", False)
+    monkeypatch.setenv("GENTLE_STREAM_AUDIO_FACTORY", "tests.test_daemon:FakeAudio")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))     # no soundfont: fast procedural instruments
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+
+def test_on_windows_the_tui_plays_in_process(windows, monkeypatch):
+    from gentle_stream.app import StreamApp
+    from gentle_stream.player import Player
+
+    seen = []
+
+    def run(self):
+        seen.append((type(self.player), self.player._stream is not None, self.initial_mood))
+        self.player.close()
+
+    monkeypatch.setattr(StreamApp, "run", run)
+    assert main(["--mood", "foggy harbour"]) == 0
+    assert seen == [(Player, True, "foggy harbour")]   # already playing when the TUI opens
+
+
+def test_on_windows_an_unavailable_audio_output_is_a_clean_error(windows, monkeypatch, capsys):
+    monkeypatch.setenv("GENTLE_STREAM_AUDIO_FACTORY", "tests.test_daemon:no_device")
+    assert main([]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "gentle-stream: cannot open the audio output: Error querying device -1\n"
+
+
+@pytest.mark.parametrize("action", ["play", "pause", "toggle", "next", "stop", "status"])
+def test_on_windows_ctl_explains_there_is_no_background_player(windows, capsys, action):
+    assert main(["ctl", action]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "gentle-stream: ctl needs the background player, which is not available on Windows\n"
+
+
+def test_help_explains_the_windows_limits(capsys):
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    assert "on Windows the music plays inside the app" in capsys.readouterr().out

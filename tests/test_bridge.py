@@ -5,6 +5,7 @@ import textwrap
 
 import pytest
 
+from gentle_stream import windows
 from gentle_stream.bridge import GentleShell, InterpretError, Usage
 from gentle_stream.style import Style
 
@@ -200,3 +201,93 @@ def test_usage_formats_compactly_and_adds_up():
     assert (total.input, total.output, total.total) == (18069, 714, 35383)
     assert total.cost_usd == pytest.approx(0.0015139)
     assert total.format() == "35.4k tokens · $0.0015"
+
+
+# ------------------------------------------------------------ Windows
+NPM_SHIM = r"""@ECHO off
+GOTO start
+:find_dp0
+SET dp0=%~dp0
+EXIT /b
+:start
+SETLOCAL
+CALL :find_dp0
+
+IF EXIST "%dp0%\node.exe" (
+  SET "_prog=%dp0%\node.exe"
+) ELSE (
+  SET "_prog=node"
+)
+
+endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & set PATHEXT=%PATHEXT:;.JS;=;% & "%_prog%"  "%dp0%\node_modules\gentle-pi\bin\gentle-shell.mjs" %*
+"""
+
+
+def executable(path, text=""):
+    path.write_text(text)
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    return path
+
+
+def which(table):
+    return lambda name, *a, **k: table.get(name)
+
+
+def test_on_windows_an_npm_shim_runs_its_node_script_directly(tmp_path, monkeypatch):
+    shim = executable(tmp_path / "gentle-shell.cmd", NPM_SHIM)
+    monkeypatch.setattr("shutil.which", which({str(shim): str(shim), "node": "C:/node/node.exe"}))
+    script = tmp_path / "node_modules" / "gentle-pi" / "bin" / "gentle-shell.mjs"
+    assert windows.resolve_command(str(shim)) == ["C:/node/node.exe", str(script)]
+
+
+def test_on_windows_the_node_next_to_the_shim_wins(tmp_path, monkeypatch):
+    shim = executable(tmp_path / "gentle-shell.cmd", NPM_SHIM)
+    node = executable(tmp_path / "node.exe")
+    monkeypatch.setattr("shutil.which", which({str(shim): str(shim), "node": "C:/node/node.exe"}))
+    script = tmp_path / "node_modules" / "gentle-pi" / "bin" / "gentle-shell.mjs"
+    assert windows.resolve_command(str(shim)) == [str(node), str(script)]
+
+
+def test_on_windows_an_exe_runs_from_its_resolved_path(monkeypatch):
+    monkeypatch.setattr("shutil.which", which({"gentle-shell": "C:/tools/gentle-shell.exe"}))
+    assert windows.resolve_command("gentle-shell") == ["C:/tools/gentle-shell.exe"]
+
+
+def test_on_windows_another_batch_file_is_refused_before_running(tmp_path, monkeypatch):
+    import gentle_stream.bridge as bridge
+
+    bat = executable(tmp_path / "gentle-shell.bat", "@echo off\r\nnode C:\\x\\gentle-shell.mjs %*\r\n")
+    monkeypatch.setattr(bridge, "WINDOWS", True)
+    monkeypatch.setattr("shutil.which", which({str(bat): str(bat)}))
+    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: pytest.fail("nothing may run"))
+    with pytest.raises(InterpretError) as e:
+        GentleShell(binary=str(bat)).list_models()
+    assert str(e.value) == (f"{bat} is a batch file that is not an npm shim: cmd.exe would mangle the prompt, "
+                            "so pass --gentle-shell an .exe")
+
+
+def test_on_windows_a_missing_binary_is_a_clean_error(monkeypatch):
+    import gentle_stream.bridge as bridge
+
+    monkeypatch.setattr(bridge, "WINDOWS", True)
+    monkeypatch.setattr("shutil.which", which({}))
+    assert windows.resolve_command("gentle-shell-that-does-not-exist") == ["gentle-shell-that-does-not-exist"]
+    with pytest.raises(InterpretError) as e:
+        GentleShell(binary="gentle-shell-that-does-not-exist").list_models()
+    assert str(e.value) == "gentle-shell-that-does-not-exist not found: install Gentle Shell or pass --gentle-shell"
+
+
+def test_on_windows_cancel_kills_the_whole_process_tree(monkeypatch):
+    import gentle_stream.bridge as bridge
+
+    calls = []
+    monkeypatch.setattr(bridge, "WINDOWS", True)
+    monkeypatch.setattr(windows.subprocess, "run", lambda args, **kw: calls.append((args, kw)))
+    monkeypatch.setattr(bridge.os, "killpg", lambda *a: calls.append("killpg"), raising=False)
+
+    class Proc:
+        pid = 4242
+
+    GentleShell._kill(Proc())
+    assert calls == [(["taskkill", "/F", "/T", "/PID", "4242"],
+                      {"stdout": windows.subprocess.DEVNULL, "stderr": windows.subprocess.DEVNULL})]
