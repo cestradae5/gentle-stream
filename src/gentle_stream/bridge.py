@@ -14,8 +14,11 @@ import subprocess
 import threading
 from dataclasses import dataclass, field
 
+from . import windows
 from .genres import NAMES as GENRE_NAMES, REGISTRY
 from .style import CHORD_INSTRUMENTS, DRUMS, KEYS, LEAD_INSTRUMENTS, MODES, Style
+
+WINDOWS = windows.WINDOWS
 
 QUIET_FLAGS = ("--no-session", "-nt", "-ns", "-np", "-nc", "--no-mcp", "--no-themes", "--no-skill-registry")
 
@@ -153,10 +156,17 @@ class GentleShell:
     def _run(self, args: list[str]) -> str:
         try:
             # own process group: gentle-shell is a launcher that spawns pi, and cancel() must stop both
-            proc = subprocess.Popen([self.binary, "--", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    stdin=subprocess.DEVNULL, text=True, start_new_session=True)
+            if WINDOWS:
+                proc = subprocess.Popen([*windows.resolve_command(self.binary), "--", *args],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                        text=True, **windows.POPEN_OPTIONS)
+            else:
+                proc = subprocess.Popen([self.binary, "--", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        stdin=subprocess.DEVNULL, text=True, start_new_session=True)
         except FileNotFoundError:
             raise InterpretError(f"{self.binary} not found: install Gentle Shell or pass --gentle-shell") from None
+        except windows.UnsupportedLauncher as e:
+            raise InterpretError(str(e)) from None
         with self._procs_lock:
             self._procs.add(proc)
         try:
@@ -179,6 +189,9 @@ class GentleShell:
 
     @staticmethod
     def _kill(proc: subprocess.Popen) -> None:
+        if WINDOWS:
+            windows.kill_tree(proc.pid)
+            return
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):

@@ -10,7 +10,7 @@
 <p>
 <img src="https://img.shields.io/badge/Python-3.13-F095C8?style=for-the-badge&labelColor=1A1218" alt="Python 3.13">
 <img src="https://img.shields.io/badge/genres-10-F095C8?style=for-the-badge&labelColor=1A1218" alt="10 genres">
-<img src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux-D7A0B8?style=for-the-badge&labelColor=1A1218" alt="Platform: macOS · Linux">
+<img src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-D7A0B8?style=for-the-badge&labelColor=1A1218" alt="Platform: macOS · Linux · Windows">
 <a href="LICENSE"><img src="https://img.shields.io/badge/MIT-D7A0B8?style=for-the-badge&labelColor=1A1218" alt="License: MIT"></a>
 </p>
 
@@ -91,7 +91,7 @@ Only describing a mood calls a model. The status line shows what that call used,
 | :--- | :--- |
 | [uv](https://docs.astral.sh/uv/) | Installs and runs gentle-stream (Python 3.13) |
 | [Gentle Shell](https://github.com/Gentleman-Programming/gentle-shell) | `gentle-shell` on your `PATH`, with at least one signed-in model provider; it interprets your moods |
-| An audio output device | Playback goes through PortAudio (`sounddevice`); on Linux install your distro's PortAudio package (for example `libportaudio2`) |
+| An audio output device | Playback goes through PortAudio (`sounddevice`); on Linux install your distro's PortAudio package (for example `libportaudio2`); on macOS and Windows the `sounddevice` wheel bundles it |
 | FluidSynth *(optional)* | Only for sampled instruments: `brew install fluid-synth` or your system's `fluidsynth` package |
 
 **Install as a command**
@@ -164,7 +164,7 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 | `p` | Saved prompts: `Enter` applies one instantly, `d` or `Delete` removes it, `Esc` closes |
 | `+` / `-` | Volume up / down by 5% |
 | `↑` / `↓` | Volume up / down by 1% |
-| `b` | Back: leave the app and keep the music playing in the background |
+| `b` | Back: leave the app and keep the music playing in the background (on Windows it stops, like `q`) |
 | `q` | Quit and stop the music (a running `gentle-shell` call is cancelled) |
 
 ### Flags
@@ -197,6 +197,8 @@ gentle-stream ctl stop     # ends the background player
 | `ctl play`, `pause`, `toggle`, `next`, `stop` | Nothing, or `gentle-stream: nothing is playing` on stderr | `0`, or `1` when nothing plays |
 
 The player listens on a Unix socket in a private directory (`$XDG_RUNTIME_DIR/gentle-stream`, default `~/.cache/gentle-stream/run`, mode `0700`), authenticated with a random key in a `0600` file. A player that crashed is detected and replaced on the next start. If the audio output cannot be opened, `gentle-stream` prints the error and exits with `1`.
+
+**On Windows** there is no background player (it relies on Unix sockets, `flock` and process sessions): the music plays inside the app, so `b` and `q` both stop it, and `ctl` prints `gentle-stream: ctl needs the background player, which is not available on Windows` and exits with `1`. Everything else works the same. The npm `gentle-shell.cmd` shim is skipped and its Node script runs directly, because `cmd.exe` would cut the multi-line prompt at its first newline.
 
 <div align="right"><a href="#top">Back to top</a></div>
 
@@ -306,6 +308,7 @@ All music is generated: the composer builds every melody, counter-melody, bass l
 | [`src/gentle_stream/__init__.py`](src/gentle_stream/__init__.py) | CLI: flags, `setup-samples`, `ctl`, attaching to or starting the background player |
 | [`src/gentle_stream/daemon.py`](src/gentle_stream/daemon.py) | The background player process: audio output, private socket, single instance |
 | [`src/gentle_stream/client.py`](src/gentle_stream/client.py) | Attach to, start and control the background player (same interface as the in-process player) |
+| [`src/gentle_stream/windows.py`](src/gentle_stream/windows.py) | Windows only: the in-process player, running Gentle Shell without its npm `.cmd` shim, stopping process trees |
 | [`src/gentle_stream/app.py`](src/gentle_stream/app.py) | Textual TUI, theme, spectrum, model picker, save and saved-prompt dialogs |
 | [`src/gentle_stream/bridge.py`](src/gentle_stream/bridge.py) | Gentle Shell call, prompt, JSON and token-usage parsing, cancellation |
 | [`src/gentle_stream/style.py`](src/gentle_stream/style.py) | The musical parameters and their validation; `n` variations |

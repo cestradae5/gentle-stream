@@ -5,6 +5,11 @@ import argparse
 import json
 import sys
 
+from .windows import WINDOWS
+
+# the background player needs Unix sockets, flock and process sessions; on Windows the music plays in-process
+BACKGROUND_PLAYER = not WINDOWS
+
 CONTROLS = """controls:
   space    play / pause
   n        next piece with the same mood
@@ -21,6 +26,7 @@ background playback:
   the music plays in a background player; gentle-stream attaches to it when it is already playing.
   gentle-stream ctl play|pause|toggle|next|stop|status controls it from any terminal
   (status prints one JSON line; the others exit 1 when nothing is playing).
+  on Windows the music plays inside the app: b and q both stop it, and ctl is not available.
 
 saved prompts live in $XDG_CONFIG_HOME/gentle-stream/presets.json (default ~/.config/gentle-stream/).
 
@@ -54,6 +60,9 @@ def setup_samples() -> int:
 
 
 def ctl(action: str) -> int:
+    if not BACKGROUND_PLAYER:
+        print("gentle-stream: ctl needs the background player, which is not available on Windows", file=sys.stderr)
+        return 1
     from .client import NoPlayer, PlayerError, PlayerGone, connect
 
     try:
@@ -86,7 +95,7 @@ def ctl(action: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    if argv[:1] == ["daemon"]:   # the background player, started by the TUI; not listed in --help
+    if argv[:1] == ["daemon"] and BACKGROUND_PLAYER:   # the background player, started by the TUI; not in --help
         from .daemon import main as daemon_main
 
         return daemon_main(argv[1:])
@@ -114,10 +123,13 @@ def main(argv: list[str] | None = None) -> int:
 
     from .app import StreamApp
     from .bridge import GentleShell
-    from .client import AudioError, PlayerError, ensure
+    if BACKGROUND_PLAYER:   # attach to the music already playing, or start the background player
+        from .client import AudioError, PlayerError, ensure as open_player
+    else:                   # client.py imports the POSIX-only daemon
+        from .windows import AudioError, PlayerError, local_player as open_player
 
     try:
-        player = ensure()   # attach to the music already playing, or start the background player
+        player = open_player()
     except AudioError as e:  # PortAudio missing, no output device, device busy...
         print(f"gentle-stream: cannot open the audio output: {e}", file=sys.stderr)
         return 1
